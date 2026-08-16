@@ -46,6 +46,7 @@ from .const import (
     CONF_METER_MODEL,
     CONF_MIN_CURRENT,
     CONF_NOMINAL_VOLTAGE,
+    CONF_PHASE_RESTORE_DELAY,
     CONF_PHASE_RESTORE_ON_UNPLUG,
     CONF_PHASE_RECOVERY_DWELL,
     CONF_PHASE_RECOVERY_ENABLED,
@@ -69,6 +70,7 @@ from .const import (
     DEFAULT_MAX_CURRENT_A,
     DEFAULT_MIN_CURRENT_A,
     DEFAULT_MODE,
+    DEFAULT_PHASE_RESTORE_DELAY_S,
     DEFAULT_PHASE_RESTORE_ON_UNPLUG,
     DEFAULT_PHASE_RECOVERY_DWELL_S,
     DEFAULT_PHASE_RECOVERY_ENABLED,
@@ -84,11 +86,13 @@ from .const import (
     GRID_PHASES,
     GRID_PHASES_1,
     GRID_PHASES_3,
+    MAX_PHASE_RESTORE_DELAY_S,
     MAX_POLL_INTERVAL,
     METER_DSMR,
     METER_MODELS,
     METER_SIGNED_GRID,
     METER_SURPLUS,
+    MIN_PHASE_RESTORE_DELAY_S,
     MIN_POLL_INTERVAL,
     NOMINAL_VOLTAGE,
 )
@@ -399,6 +403,11 @@ class UniteOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_PHASE_RESTORE_ON_UNPLUG, default=DEFAULT_PHASE_RESTORE_ON_UNPLUG
                 ): bool,
+                vol.Required(
+                    CONF_PHASE_RESTORE_DELAY, default=DEFAULT_PHASE_RESTORE_DELAY_S
+                ): _num(
+                    MIN_PHASE_RESTORE_DELAY_S, MAX_PHASE_RESTORE_DELAY_S, 1, "s"
+                ),
             }
         )
         return self.async_show_form(

@@ -212,17 +212,26 @@ PHASE_RESTORE_COOLDOWN_S: Final = 60  # blocks re-press while the 0->1 toggle ru
 # 1-phase installation apart from a 3-phase charger stuck at 1-phase, so the
 # phase-config restore is gated on this explicit setting. Defaults to what the
 # charger reports at setup; the user can correct it.
-# Automatically re-sync the installation phase config when the charger is found
-# stuck on 1-phase, at unplug - the only moment there is no session to break.
-# Opt-in: it writes an installation setting over the charger's web UI.
-# Retry pacing for the automatic restore: the "idle and stuck" condition stays
-# true until it is fixed, so without a floor we would hammer the web UI every
-# poll. Give up after a few tries; plugging a vehicle in re-arms it.
-PHASE_RESTORE_RETRY_S: Final = 900          # 15 min between attempts
-PHASE_RESTORE_MAX_ATTEMPTS: Final = 3
-
+# Automatically re-apply the installation phase config after every unplug - the
+# firmware only restores register 405 to its default on a power cycle, reset or
+# Modbus disconnect (never on unplug), so on some chargers a session can start
+# on one phase even though 3-phase is configured. Toggling currentLimiterPhase
+# forces the firmware to re-apply its default. Opt-in: it writes an installation
+# setting over the charger's web UI. Edge-triggered (once per unplug), so no
+# retry/pacing machinery is needed - a failed attempt is simply retried at the
+# next unplug. Guarded by CONF_GRID_PHASES so a genuine 1-phase install is never
+# forced to 3-phase.
 CONF_PHASE_RESTORE_ON_UNPLUG: Final = "phase_restore_on_unplug"
 DEFAULT_PHASE_RESTORE_ON_UNPLUG: Final = False
+
+# Wait this long after the unplug before toggling: let the wallbox finish ending
+# the session and settle to idle, and debounce cable-state flicker on unplug.
+# Re-checked just before the toggle - if a vehicle reconnected within the delay,
+# the restore is aborted so a starting session is never torn down.
+CONF_PHASE_RESTORE_DELAY: Final = "phase_restore_delay"
+DEFAULT_PHASE_RESTORE_DELAY_S: Final = 5
+MIN_PHASE_RESTORE_DELAY_S: Final = 0
+MAX_PHASE_RESTORE_DELAY_S: Final = 60
 
 CONF_GRID_PHASES: Final = "grid_phases"
 GRID_PHASES_1: Final = "1"

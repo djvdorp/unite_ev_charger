@@ -64,26 +64,25 @@ def should_restore_phase_config(
     vehicle_connected: bool,
     phase_capability_raw: int | None,
     grid_phases: str | None,
-    attempts: int,
-    max_attempts: int,
 ) -> bool:
-    """Whether to re-sync a stuck 1-phase installation config right now.
+    """Whether to re-apply the installation phase config after an unplug.
 
-    Only when the charger is idle: the fix tears down a running session and some
-    cars will not re-negotiate without being re-plugged. Only when it is really
-    stuck (404 reads 0) on an installation the user declared as 3-phase - on a
-    genuine 1-phase wallbox 404 = 0 is correct and must be left alone. Attempts
-    are capped so a charger that refuses to keep the setting is not hammered.
+    Fired unconditionally after every unplug (the caller supplies the edge), not
+    only when the charger looks stuck: register 405 is only reset to its default
+    on a power cycle, reset or Modbus disconnect - never on unplug - so a session
+    can start single-phase with all registers reading correctly, which no 404
+    check would catch. Toggling currentLimiterPhase re-applies the default.
+
+    Only guard that survives: never on a genuine 1-phase install, where 404 = 0
+    is correct and a 3-phase config must not be forced. It must also be opt-in,
+    have a web-UI login, and the vehicle must be gone (the caller re-checks this
+    just before the toggle, after the settle delay).
     """
     if not (enabled and rest_enabled):
         return False
     if vehicle_connected:
         return False
-    if phase_capability_raw != 0:
-        return False
-    if not is_three_phase_install(grid_phases, phase_capability_raw):
-        return False
-    return attempts < max_attempts
+    return is_three_phase_install(grid_phases, phase_capability_raw)
 
 
 def derive_charger_state(

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from time import monotonic
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -22,6 +21,7 @@ from .const import (
     CONF_FAILSAFE_TIMEOUT,
     CONF_GRID_PHASES,
     CONF_HOST,
+    CONF_PHASE_RESTORE_DELAY,
     CONF_PHASE_RESTORE_ON_UNPLUG,
     CONF_POLL_INTERVAL,
     CONF_REST_ENABLED,
@@ -29,10 +29,11 @@ from .const import (
     CONF_REST_USERNAME,
     DEFAULT_FAILSAFE_CURRENT_A,
     DEFAULT_FAILSAFE_TIMEOUT_S,
+    DEFAULT_PHASE_RESTORE_DELAY_S,
     DEFAULT_PHASE_RESTORE_ON_UNPLUG,
     DEFAULT_POLL_INTERVAL,
-    PHASE_RESTORE_MAX_ATTEMPTS,
-    PHASE_RESTORE_RETRY_S,
+    MAX_PHASE_RESTORE_DELAY_S,
+    MIN_PHASE_RESTORE_DELAY_S,
     DEFAULT_REST_ENABLED,
     DEFAULT_REST_USERNAME,
     DOMAIN,
@@ -60,9 +61,8 @@ class WebastoCoordinator(DataUpdateCoordinator[WallboxData]):
         self.client = client
         self.device = DeviceInfo()
         self.controller = None  # wired in once control is built
+        self._vehicle_was_connected = False
         self._auto_restore_task: asyncio.Task | None = None
-        self._auto_restore_attempts = 0
-        self._auto_restore_after = 0.0
         self.last_auto_phase_restore: datetime | None = None
         # monotonic deadline until which a web-UI reboot is considered in
         # progress (set by the restart button); drives the 'restarting' state.
@@ -185,46 +185,56 @@ class WebastoCoordinator(DataUpdateCoordinator[WallboxData]):
             raise UpdateFailed(str(err)) from err
 
     def _maybe_auto_restore_phase(self, data: WallboxData) -> None:
-        """Re-sync a stuck 1-phase installation config while the charger is idle.
+        """Re-apply the installation phase config after the vehicle is unplugged.
 
-        The web-UI toggle that fixes this tears down a running charging session,
-        and some cars only re-negotiate after being re-plugged - so it may only
-        run with no vehicle attached. It is not tied to the unplug *moment*: the
-        config also flips on its own, and waiting for the next unplug would cost
-        the user a whole session on one phase.
+        The firmware only resets register 405 to its default on a power cycle,
+        reset or Modbus disconnect - never on unplug - so on some chargers a new
+        session starts single-phase even with 3-phase configured and every
+        register reading correctly. Toggling currentLimiterPhase after each
+        unplug forces the firmware to re-apply its default, giving the next
+        session a clean start.
+
+        Edge-triggered on the unplug: the fix would tear down a running session,
+        so it only runs with no vehicle attached, and firing once per unplug
+        means no pacing or retry counter - a failed attempt is retried at the
+        next unplug.
         """
-        # A fresh plug-in re-arms the automation: whatever went wrong before, the
-        # user is charging again and a new attempt is warranted next time.
-        if data.vehicle_connected:
-            self._auto_restore_attempts = 0
-            return
-        if data.phase_capability_raw != 0:
-            self._auto_restore_attempts = 0  # healthy again
+        connected = data.vehicle_connected
+        just_unplugged = self._vehicle_was_connected and not connected
+        self._vehicle_was_connected = connected
+        if not just_unplugged:
             return
         o = self.entry.options
         if not ctrl.should_restore_phase_config(
             enabled=o.get(CONF_PHASE_RESTORE_ON_UNPLUG, DEFAULT_PHASE_RESTORE_ON_UNPLUG),
             rest_enabled=o.get(CONF_REST_ENABLED, DEFAULT_REST_ENABLED),
-            vehicle_connected=data.vehicle_connected,
+            vehicle_connected=connected,
             phase_capability_raw=data.phase_capability_raw,
             grid_phases=o.get(CONF_GRID_PHASES),
-            attempts=self._auto_restore_attempts,
-            max_attempts=PHASE_RESTORE_MAX_ATTEMPTS,
         ):
-            return
-        # The "idle and stuck" condition stays true until it is fixed, so pace
-        # the retries instead of hammering the web UI every poll.
-        now = monotonic()
-        if now < self._auto_restore_after:
             return
         if self._auto_restore_task is not None and not self._auto_restore_task.done():
             return
-        self._auto_restore_after = now + PHASE_RESTORE_RETRY_S
-        self._auto_restore_attempts += 1
         self._auto_restore_task = self.hass.async_create_task(self._async_auto_restore_phase())
 
     async def _async_auto_restore_phase(self) -> None:
         o = self.entry.options
+        delay = int(o.get(CONF_PHASE_RESTORE_DELAY, DEFAULT_PHASE_RESTORE_DELAY_S))
+        delay = max(MIN_PHASE_RESTORE_DELAY_S, min(MAX_PHASE_RESTORE_DELAY_S, delay))
+        # Let the charger finish ending the session and settle; also debounces a
+        # bouncing cable state on unplug. Only re-check for a reconnect when we
+        # actually waited: with no delay there is no window, and self.data may not
+        # yet hold this poll's (just-unplugged) snapshot.
+        if delay:
+            await asyncio.sleep(delay)
+            # A vehicle reconnected during the settle delay: toggling now would
+            # drop register 404 to 0 for ~10 s and tear down the starting
+            # session. Abort.
+            if self.data is not None and self.data.vehicle_connected:
+                _LOGGER.debug(
+                    "Vehicle reconnected during the settle delay; skipping phase restore"
+                )
+                return
         try:
             route = await async_restore_three_phase(
                 async_get_clientsession(self.hass),
@@ -234,17 +244,15 @@ class WebastoCoordinator(DataUpdateCoordinator[WallboxData]):
             )
         except UniteRestError as err:
             _LOGGER.warning(
-                "Charger is stuck on 1-phase, but the automatic restore failed "
-                "(attempt %s of %s): %s",
-                self._auto_restore_attempts,
-                PHASE_RESTORE_MAX_ATTEMPTS,
+                "Automatic phase-config restore after unplug failed "
+                "(will retry at the next unplug): %s",
                 err,
             )
             return
         self.last_auto_phase_restore = datetime.now(timezone.utc)
         _LOGGER.info(
-            "Vehicle unplugged with the charger stuck on 1-phase; restored the "
-            "3-phase config via %s",
+            "Vehicle unplugged; re-applied the 3-phase config via %s so the next "
+            "session starts clean",
             route,
         )
         await self.async_request_refresh()
