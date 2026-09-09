@@ -16,6 +16,7 @@ fuse guarding, 1↔3 phase control, evcc support and an optional web-UI restart 
 **What it does:** local monitoring + charge control, solar/fuse guard, phase control,
 evcc passthrough, and a web-UI reboot. When the integration leaves, it puts the
 charger's registers back the way it found them.
+
 **What it does not do:** cloud and OCPP; it talks only to the charger on your LAN,
 and targets the Vestel EVC04 family (Webasto Unite).
 
