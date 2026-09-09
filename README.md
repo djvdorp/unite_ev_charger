@@ -54,7 +54,7 @@ Available in **English and Dutch** — Home Assistant picks the user's language.
   [Use in evcc](#use-in-evcc).
 - **Restart button (web UI)** *(opt-in)* — reboot the wallbox from HA over its
   local web UI, since Modbus has no reboot register. See
-  [Web UI](#web-ui).
+  [Web UI details](#web-ui-details).
 - **Safety & resilience** — failsafe current/timeout, an alive heartbeat, a full
   ownership handshake on every reconnect, and a register baseline that is
   captured before the first write and restored on exit. See
@@ -159,6 +159,19 @@ it when the charger is stuck, it stops an ongoing charging session. The login
 is also required for *Restore for Unite bug* on the Charging screen. The
 password is stored locally only.
 
+### Status & diagnostics
+
+The integration exposes a diagnostic **Connection** binary sensor with
+reconnect counters, Modbus failure counters, timeout counters, heartbeat
+failures and response timing.
+
+The **Charger state** sensor interprets the charger state as one of: idle,
+connected, charging, phase mismatch, recovery, restarting, disconnected or
+fault. The diagnostic **Phase mismatch** binary sensor turns on when 3-phase
+was explicitly requested while measured current shows the vehicle is still
+effectively charging on L1 only. The diagnostic **Last phase recovery** sensor
+stores the timestamp and result of the latest recovery attempt.
+
 ## Phase switching
 
 A phase change is normally a **single write** to register `405` — the Unite runs
@@ -194,7 +207,7 @@ register), so it needs the Web UI login, and it never runs on a genuine
 1-phase installation.
 
 If the charger itself is thoroughly stuck (a plain switch doesn't clear it),
-the reliable fix remains a **restart** — see [Web UI](#web-ui).
+the reliable fix remains a **restart** — see [Web UI details](#web-ui-details).
 
 ## Modbus ownership, failsafe & reconnect
 
@@ -235,7 +248,7 @@ that cannot be restored is logged with its value for manual recovery. The
 baseline answers "before us", never a guessed factory default — and changing
 your settings later does not touch it.
 
-## Web UI
+## Web UI details
 
 Modbus has no reboot register, so a restart goes over the charger's local **web
 UI**. Different Unite firmware/interfaces expose different web UIs, so the
