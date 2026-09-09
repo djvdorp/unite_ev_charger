@@ -27,6 +27,21 @@ class WebastoModbusError(RuntimeError):
     """Raised when a Modbus operation cannot be completed."""
 
 
+@dataclass(frozen=True, slots=True)
+class OptionalReadResult:
+    """Outcome of a best-effort read of an optional register.
+
+    ``value`` is the decoded value, or None when the register is unavailable.
+    ``transport_error`` is True when nothing came back at all (timeout /
+    connection lost) as opposed to a clean protocol refusal; the coordinator
+    uses it to tell "this firmware lacks the register" apart from "probing
+    this register may be knocking the wallbox over".
+    """
+
+    value: Any = None
+    transport_error: bool = False
+
+
 @dataclass(slots=True)
 class ModbusStats:
     connected: bool = False
@@ -91,6 +106,40 @@ class WebastoModbus:
     async def read_register(self, reg: RegisterDef) -> Any:
         block = await self._read_block(reg.reg_type, reg.address, reg.count)
         return decode_scalar(reg, block)
+
+    async def try_read_optional(self, reg: RegisterDef) -> OptionalReadResult:
+        """Best-effort read of an optional register. Never drops the connection.
+
+        Unlike :meth:`read_register` this never raises and never disconnects:
+        a refusal or a timeout is reported in the result so the caller can
+        decide to stop probing. Stats are still recorded.
+        """
+        async with self._lock:
+            try:
+                await self._ensure_connected_locked()
+                assert self._client is not None
+                t0 = monotonic()
+                method = (
+                    self._client.read_input_registers
+                    if reg.reg_type == RegType.INPUT
+                    else self._client.read_holding_registers
+                )
+                resp = await self._request(method, address=reg.address, count=reg.count)
+            except (ModbusException, OSError, asyncio.TimeoutError) as err:
+                self.stats.read_failures += 1
+                if isinstance(err, asyncio.TimeoutError):
+                    self.stats.timeouts += 1
+                self.stats.last_error = str(err)
+                return OptionalReadResult(value=None, transport_error=True)
+            if resp is None or isinstance(resp, ExceptionResponse) or resp.isError():
+                # Clean protocol refusal (e.g. illegal address): the wallbox is
+                # alive, it just does not serve this register.
+                self.stats.read_failures += 1
+                self.stats.last_error = f"Optional register {reg.name} refused: {resp}"
+                return OptionalReadResult(value=None, transport_error=False)
+            self.stats.record_response(monotonic() - t0)
+            self._mark_ok()
+            return OptionalReadResult(value=decode_scalar(reg, list(resp.registers)))
 
     async def write_register(self, reg: RegisterDef, value: float | int | bool) -> None:
         if not reg.writable:

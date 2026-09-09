@@ -4,8 +4,10 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_HOST,
@@ -21,6 +23,10 @@ from .coordinator import WebastoCoordinator
 from .modbus import WebastoModbus, WebastoModbusError
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _baseline_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
+    return Store(hass, 1, f"{DOMAIN}_baseline_{entry.entry_id}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -44,6 +50,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
+
+    async def _async_restore_on_stop(_event) -> None:
+        coord: WebastoCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if coord is not None:
+            try:
+                await coord.async_restore_baseline_on_exit()
+            except Exception:  # noqa: BLE001 - shutdown must never hang on this
+                _LOGGER.exception("Baseline restore on shutdown failed")
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_restore_on_stop)
+    )
     return True
 
 
@@ -58,5 +76,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator: WebastoCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         if coordinator.controller is not None:
             await coordinator.controller.async_shutdown()
+        try:
+            await coordinator.async_restore_baseline_on_exit()
+        except Exception:  # noqa: BLE001 - unload must still close the client
+            _LOGGER.exception("Baseline restore on unload failed")
         await coordinator.client.async_close()
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove a config entry; drop its stored register baseline."""
+    try:
+        await _baseline_store(hass, entry).async_remove()
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Could not remove the stored register baseline", exc_info=True)

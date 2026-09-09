@@ -47,3 +47,72 @@ async def program_failsafe(
 async def write_heartbeat(client: WebastoModbus) -> None:
     """Write the alive register. Raises so callers can surface comms loss."""
     await client.write_register(R.ALIVE, HEARTBEAT_ALIVE_VALUE)
+
+
+# --- Baseline capture + restore -------------------------------------------
+# Register 2000 (failsafe current) is persistent user-visible configuration:
+# it survives a Modbus disconnect and even a power cycle, and a stale value
+# actively drives behaviour (the charger overwrites 5004 with it once Alive
+# lapses). So before our first write we capture what is there, and on exit we
+# put it back. The baseline answers "before us", never "factory default".
+
+# Keys used in the stored baseline dict.
+BASELINE_SET_CURRENT = "set_current"
+BASELINE_FAILSAFE_CURRENT = "failsafe_current"
+BASELINE_FAILSAFE_TIMEOUT = "failsafe_timeout"
+BASELINE_PHASE_SWITCH = "phase_switch"
+
+
+async def capture_baseline(
+    client: WebastoModbus, *, include_phase: bool
+) -> dict[str, int | None]:
+    """Read the registers we are about to manage, before writing any of them.
+
+    Best-effort per register: a missing register becomes None and is simply
+    skipped at restore time. Performs no writes.
+    """
+    baseline: dict[str, int | None] = {}
+    for key, reg in (
+        (BASELINE_SET_CURRENT, R.SET_CURRENT_A),
+        (BASELINE_FAILSAFE_CURRENT, R.FAILSAFE_CURRENT_A),
+        (BASELINE_FAILSAFE_TIMEOUT, R.FAILSAFE_TIMEOUT_S),
+    ):
+        try:
+            baseline[key] = int(await client.read_register(reg))
+        except WebastoModbusError:
+            baseline[key] = None
+    if include_phase:
+        try:
+            baseline[BASELINE_PHASE_SWITCH] = int(await client.read_register(R.PHASE_SWITCH))
+        except WebastoModbusError:
+            baseline[BASELINE_PHASE_SWITCH] = None
+    else:
+        baseline[BASELINE_PHASE_SWITCH] = None
+    return baseline
+
+
+async def restore_baseline(
+    client: WebastoModbus, baseline: dict[str, int | None]
+) -> list[str]:
+    """Write captured values back and verify by read-back.
+
+    Returns the keys that could not be restored (write or verify failed), so
+    the caller can log them for manual recovery. Never raises.
+    """
+    failed: list[str] = []
+    for key, reg in (
+        (BASELINE_SET_CURRENT, R.SET_CURRENT_A),
+        (BASELINE_FAILSAFE_CURRENT, R.FAILSAFE_CURRENT_A),
+        (BASELINE_FAILSAFE_TIMEOUT, R.FAILSAFE_TIMEOUT_S),
+        (BASELINE_PHASE_SWITCH, R.PHASE_SWITCH),
+    ):
+        value = baseline.get(key)
+        if value is None:
+            continue
+        try:
+            await client.write_register(reg, int(value))
+            if int(await client.read_register(reg)) != int(value):
+                failed.append(key)
+        except WebastoModbusError:
+            failed.append(key)
+    return failed

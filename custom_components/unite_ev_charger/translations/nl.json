@@ -190,102 +190,156 @@
         "menu_options": {
           "connection": "Verbinding",
           "charge": "Laden",
-          "meter": "Energiemeter",
-          "dlb": "Dynamic Load Balancing (DLB)",
-          "solar": "Zon",
+          "meter": "Stroommeter",
+          "dlb": "Hoofdzekering bewaken (DLB)",
+          "solar": "Zonnestroom-laden",
           "advanced": "Geavanceerd",
-          "reboot": "Herstarten (web-UI)",
+          "reboot": "Lader herstarten",
           "save": "Opslaan en sluiten"
         }
       },
       "connection": {
         "title": "Verbinding",
+        "description": "Waar staat je lader op het thuisnetwerk? Meestal hoef je hier na de installatie nooit meer te komen.",
         "data": {
           "host": "IP-adres",
           "port": "Poort",
           "unit_id": "Modbus unit-ID"
+        },
+        "data_description": {
+          "host": "Bijv. 192.168.1.50. Te vinden in je router of in de web-UI van de lader.",
+          "port": "Standaard 502 \u2014 alleen wijzigen als je hem op de lader zelf hebt veranderd.",
+          "unit_id": "Standaard 255 \u2014 alleen wijzigen als de lader niet reageert."
         }
       },
       "charge": {
         "title": "Laden",
+        "description": "Hoe de lader laadt. De meeste mensen hebben hier alleen 'Wie bepaalt het laden' en 'Netaansluiting' nodig.",
         "data": {
-          "control_mode": "Laadregeling",
-          "default_mode": "Standaard modus",
-          "min_current": "Minimale laadstroom (A)",
-          "max_current": "Maximale laadstroom (A)",
+          "control_mode": "Wie bepaalt het laden?",
+          "default_mode": "Startmodus",
+          "min_current": "Minimum laadstroom",
+          "max_current": "Maximale laadstroom",
           "grid_phases": "Netaansluiting lader",
-          "phase_switching": "Fasewissel inschakelen (1<->3)",
-          "phase_recovery_enabled": "1→3 faseherstel inschakelen",
-          "phase_recovery_observe": "Observatietijd 1→3 (s)",
-          "phase_recovery_dwell": "Hersteltijd 1→3 (s)",
-          "phase_restore_on_unplug": "3-fase-config na elke unplug opnieuw toepassen",
-          "phase_restore_delay": "Wachttijd na unplug vóór herstel (s)"
+          "phase_switching": "Schakelen tussen 1 en 3 fasen",
+          "phase_recovery_enabled": "Auto's helpen die op 1 fase blijven hangen",
+          "phase_restore_on_unplug": "Herstel voor Unite-bug (vast op 1 fase)"
+        },
+        "data_description": {
+          "control_mode": "Ingebouwd = deze integratie bepaalt hoe er geladen wordt. Extern = evcc (of een andere regelaar) bepaalt; deze integratie geeft het alleen door.",
+          "default_mode": "Elke sessie begint hiermee als je insteekt. Tijdens het laden kun je altijd wisselen.",
+          "min_current": "Normaal 6A. Instelbaar 6A–32A (ongeveer 1,4 kW per fase bij 6A).",
+          "max_current": "Normaal 16A (ongeveer 11 kW bij 3 fasen). Niet lager dan het minimum.",
+          "grid_phases": "1-fase of 3-fasen, zoals de elektricien hem heeft aangesloten. Bij twijfel: kijk in de web-UI van de lader. Deze instelling voorkomt ook dat de fase-oplossingen hieronder op een verkeerde installatie losgaan.",
+          "phase_switching": "Laat de lader schakelen tussen 1 fase (zuinig bij weinig zon) en 3 fasen (snel). Alleen aanzetten bij een 3-fasen-aansluiting.",
+          "phase_recovery_enabled": "Sommige auto's pakken 3 fasen na het schakelen niet vanzelf op — dan pauzeert de lader even zodat de auto opnieuw op 3 fasen begint. Onderbreekt het laden kort, daarom staat dit standaard uit.",
+          "phase_restore_on_unplug": "Omzeilt een laderbug waarbij een nieuwe sessie op 1 fase start terwijl er 3 fasen zijn ingesteld. Na elk afkoppelen wordt de lader kort op 1 fase en weer terug op 3 fasen gezet, zodat hij zijn eigen instelling opnieuw toepast. Vereist de web-UI-login en een 3-fasen-aansluiting."
         }
       },
       "meter": {
-        "title": "Energiemeter",
-        "description": "Kies hoe je je net-/zonvermogen meet. Gedeeld door Zon en DLB.",
+        "title": "Stroommeter",
+        "description": "Hiermee ziet de lader hoeveel zonnestroom er over is. Dit gebruikt hij voor zonnestroom-laden én voor de hoofdzekering-bewaking.",
         "data": {
-          "meter_model": "Type meter"
+          "meter_model": "Welke meter heb je?"
         }
       },
       "meter_signed": {
         "title": "Netvermogen-sensor",
+        "description": "Je meter geeft één getal: positief bij verbruik, negatief (of andersom) bij terugleveren. Kies die sensor hier.",
         "data": {
           "grid_power_sensor": "Netvermogen-sensor",
-          "grid_export_negative": "Teruglevering is negatief",
-          "nominal_voltage": "Nominaal voltage (V)"
+          "grid_export_negative": "Terugleveren staat als min-getal",
+          "nominal_voltage": "Nominale spanning"
+        },
+        "data_description": {
+          "grid_export_negative": "Aan als je meter negatief wordt als de zon schijnt (zoals HomeWizard). Uit als terugleveren positief is.",
+          "nominal_voltage": "Meestal 230 V. Alleen gebruikt om watts naar ampère om te rekenen."
         }
       },
       "meter_dsmr": {
         "title": "Import + export sensoren",
+        "description": "Je meter geeft verbruik en teruglevering als twee aparte getallen. Kies beide sensoren hier.",
         "data": {
           "import_power_sensor": "Importvermogen-sensor",
           "export_power_sensor": "Exportvermogen-sensor",
-          "nominal_voltage": "Nominaal voltage (V)"
+          "nominal_voltage": "Nominale spanning"
+        },
+        "data_description": {
+          "nominal_voltage": "Meestal 230 V. Alleen gebruikt om watts naar ampère om te rekenen."
         }
       },
       "meter_surplus": {
         "title": "Overschot-sensor",
+        "description": "Je hebt al een sensor die het zonoverschot direct meldt (positief = overschot). Kies die hier.",
         "data": {
           "surplus_power_sensor": "Overschot-sensor",
-          "nominal_voltage": "Nominaal voltage (V)"
+          "nominal_voltage": "Nominale spanning"
+        },
+        "data_description": {
+          "nominal_voltage": "Meestal 230 V. Alleen gebruikt om watts naar ampère om te rekenen."
         }
       },
       "dlb": {
-        "title": "Dynamic Load Balancing (DLB)",
-        "description": "Beperkt het laden zodat elke fase onder de hoofdzekering blijft. Vul L1 in (en L2/L3 bij een 3-fase aansluiting).",
+        "title": "Hoofdzekering bewaken (DLB)",
+        "description": "Bewaakt je hoofdzekering: het laden wordt afgeknepen als je huis veel stroom trekt, zodat de zekering er nooit uitvliegt.",
         "data": {
-          "dlb_enabled": "Totale belasting beperken",
+          "dlb_enabled": "Hoofdzekering bewaken",
           "main_fuse_a": "Hoofdzekering (A)",
           "dlb_margin_a": "Veiligheidsmarge (A)",
-          "dlb_current_l1": "Netstroom L1",
-          "dlb_current_l2": "Netstroom L2",
-          "dlb_current_l3": "Netstroom L3"
+          "dlb_current_l1": "Huisverbruik fase 1",
+          "dlb_current_l2": "Huisverbruik fase 2",
+          "dlb_current_l3": "Huisverbruik fase 3"
+        },
+        "data_description": {
+          "dlb_enabled": "Uit = de lader houdt geen rekening met je huisverbruik.",
+          "main_fuse_a": "Meestal 25 A. Bij twijfel: kijk in de meterkast.",
+          "dlb_margin_a": "Houdt wat ruimte over onder de zekering. Normaal 2 A.",
+          "dlb_current_l1": "Verplicht. Fase 2 en 3 alleen nodig bij een 3-fasen-aansluiting."
         }
       },
       "solar": {
-        "title": "Zon",
+        "title": "Zonnestroom-laden",
+        "description": "Fijnafstelling voor de modi Zon en Minimum + Zon. Alleen nodig als de standaardwaarden je niet bevallen.",
         "data": {
-          "solar_min_current": "Minimale zon-stroom (A)",
-          "phase_switch_dwell": "Wachttijd fase-wissel (s)"
+          "solar_min_current": "Minimum zon-laden",
+          "phase_switch_dwell": "Wachttijd tussen fasewissels"
+        },
+        "data_description": {
+          "solar_min_current": "Het laden start als het overschot dit afdekt. Normaal 6A.",
+          "phase_switch_dwell": "Wacht zo lang voordat er tussen 1 en 3 fasen wordt gewisseld, zodat een passerende wolk niet steeds heen-en-weer schakelt. Normaal 300 s."
         }
       },
       "advanced": {
         "title": "Geavanceerd",
+        "description": "Alleen wijzigen als je weet waarom. Foute waarden kunnen het laden stilleggen. De timers hieronder gelden alleen als hun schakelaar (op het Laden-scherm) aan staat.",
         "data": {
-          "poll_interval": "Polling-interval (s)",
-          "failsafe_current": "Failsafe-stroom (A)",
-          "failsafe_timeout": "Failsafe-timeout (s)"
+          "poll_interval": "Hoe vaak contact",
+          "failsafe_current": "Noodstroom bij wegvallen contact",
+          "failsafe_timeout": "Wachttijd vóór noodstroom",
+          "phase_recovery_observe": "Kijktijd vóór 1-fase-hulp",
+          "phase_recovery_dwell": "Pauzeduur 1-fase-hulp",
+          "phase_restore_delay": "Wachttijd na afkoppelen"
+        },
+        "data_description": {
+          "poll_interval": "Hoe vaak de lader wordt uitgelezen. Normaal 10 s.",
+          "failsafe_current": "Hierop valt de lader terug als hij een tijdje niets hoort. Normaal 6A; 0A stopt het laden helemaal.",
+          "failsafe_timeout": "Hoe lang de stilte mag duren voordat de noodstroom ingaat. Normaal 30 s.",
+          "phase_recovery_observe": "Hoe lang er gekeken wordt voordat vaststaat dat de auto op 1 fase hangt. Normaal 60 s.",
+          "phase_recovery_dwell": "Hoe lang het laden pauzeert zodat de auto opnieuw op 3 fasen begint. Normaal 121 s.",
+          "phase_restore_delay": "Laat de lader de sessie afronden. Binnen deze tijd weer insteken annuleert het herstel. Normaal 5 s."
         }
       },
       "reboot": {
-        "title": "Herstarten (web-UI)",
-        "description": "Schakel de web-UI-login van de lader in om een Herstart-knop toe te voegen. Dit gebruikt HTTPS (Modbus kan niet herstarten), los van de laadbesturing.",
+        "title": "Web-UI",
+        "description": "Logt in op de webomgeving van de lader. Dit voegt een Herstart-knop toe — alleen gebruiken als de lader vastzit, een lopende laadsessie stopt ermee. De login is ook nodig voor \"Herstel voor Unite-bug\" op het Laden-scherm.",
         "data": {
-          "rest_enabled": "Herstart via web-UI inschakelen",
-          "rest_username": "Web-UI gebruikersnaam",
-          "rest_password": "Web-UI wachtwoord"
+          "rest_enabled": "Web-UI-login inschakelen",
+          "rest_username": "Gebruikersnaam web-UI lader",
+          "rest_password": "Wachtwoord web-UI lader"
+        },
+        "data_description": {
+          "rest_username": "Meestal \"admin\". Eén keer nodig om op de lader in te loggen.",
+          "rest_password": "Het wachtwoord van de web-UI van de lader (op de sticker of zelf ingesteld). Alleen lokaal opgeslagen."
         }
       }
     },
@@ -302,8 +356,8 @@
   "selector": {
     "control_mode": {
       "options": {
-        "internal": "Ingebouwd (zon / load balancing / handmatig)",
-        "external": "Externe controller (bijv. evcc)"
+        "internal": "Ingebouwd (zon / zekeringbewaking / handmatig)",
+        "external": "Externe regelaar (bijv. evcc)"
       }
     },
     "charge_mode": {
@@ -311,15 +365,15 @@
         "fast": "Snel",
         "manual": "Handmatig",
         "solar": "Zon",
-        "min_solar": "Minimum en Zon"
+        "min_solar": "Minimum + Zon"
       }
     },
     "meter_model": {
       "options": {
-        "none": "Geen",
+        "none": "Geen — geen zonladen, geen zekeringbewaking",
         "signed_grid": "HomeWizard P1 / netvermogen",
         "dsmr": "DSMR (import + export)",
-        "surplus": "Overschot-sensor"
+        "surplus": "Kant-en-klare overschot-sensor"
       }
     },
     "grid_phases": {

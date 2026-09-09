@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from . import registers as R
@@ -23,6 +24,7 @@ from .const import (
     CONF_HOST,
     CONF_PHASE_RESTORE_DELAY,
     CONF_PHASE_RESTORE_ON_UNPLUG,
+    CONF_PHASE_SWITCHING,
     CONF_POLL_INTERVAL,
     CONF_REST_ENABLED,
     CONF_REST_PASSWORD,
@@ -31,6 +33,7 @@ from .const import (
     DEFAULT_FAILSAFE_TIMEOUT_S,
     DEFAULT_PHASE_RESTORE_DELAY_S,
     DEFAULT_PHASE_RESTORE_ON_UNPLUG,
+    DEFAULT_PHASE_SWITCHING,
     DEFAULT_POLL_INTERVAL,
     MAX_PHASE_RESTORE_DELAY_S,
     MIN_PHASE_RESTORE_DELAY_S,
@@ -43,7 +46,7 @@ from .control import effective_poll_interval
 from .rest_client import UniteRestError, async_restore_three_phase
 from .modbus import WebastoModbus, WebastoModbusError
 from .models import DeviceInfo, WallboxData, apply_session, parse_telemetry
-from .safety import program_failsafe, write_heartbeat
+from .safety import capture_baseline, program_failsafe, restore_baseline, write_heartbeat
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +66,10 @@ class WebastoCoordinator(DataUpdateCoordinator[WallboxData]):
         self.controller = None  # wired in once control is built
         self._vehicle_was_connected = False
         self._auto_restore_task: asyncio.Task | None = None
+        self._rfid_probe = ctrl.RfidProbe()
+        self._baseline_store = Store(hass, 1, f"{DOMAIN}_baseline_{entry.entry_id}")
+        self._baseline: dict[str, int | None] | None = None
+        self._baseline_loaded = False
         self.last_auto_phase_restore: datetime | None = None
         # monotonic deadline until which a web-UI reboot is considered in
         # progress (set by the restart button); drives the 'restarting' state.
@@ -145,14 +152,31 @@ class WebastoCoordinator(DataUpdateCoordinator[WallboxData]):
             except WebastoModbusError:
                 data.phase_capability_raw = self.device.phases_supported
             # Session RFID tag: only meaningful while a vehicle is connected, and
-            # absent on firmware older than spec v1.9 - so it is gated and its own
-            # failure never affects the rest of the cycle.
-            if data.vehicle_connected:
-                try:
-                    tag = str(await self.client.read_register(R.SESSION_RFID_TAG)).strip()
+            # absent on firmware older than spec v1.9. Probed once per connection
+            # (see RfidProbe in control.py): a failed probe never affects the
+            # rest of the cycle and never drops the connection.
+            if data.vehicle_connected and self._rfid_probe.want_probe:
+                result = await self.client.try_read_optional(R.SESSION_RFID_TAG)
+                if result.value is not None:
+                    self._rfid_probe.note_ok()
+                    tag = str(result.value).strip()
                     data.session_rfid = tag or None
-                except WebastoModbusError:
+                elif result.transport_error:
                     data.session_rfid = None
+                    if self._rfid_probe.note_transport_error():
+                        _LOGGER.warning(
+                            "RFID probe keeps losing the connection; RFID reads "
+                            "disabled until the integration is reloaded"
+                        )
+                else:
+                    data.session_rfid = None
+                    self._rfid_probe.note_unsupported()
+                    _LOGGER.info(
+                        "Charger does not serve the RFID registers; "
+                        "skipping RFID reads on this connection"
+                    )
+            else:
+                data.session_rfid = None
 
             self._maybe_auto_restore_phase(data)
 
@@ -267,6 +291,33 @@ class WebastoCoordinator(DataUpdateCoordinator[WallboxData]):
         freshly read ``phase_switch_raw`` is the reset default, used to skip a
         needless phase write when it already matches.
         """
+        # A new connection may serve new firmware: allow one fresh RFID probe.
+        # Strike history survives (it describes the wallbox, not the socket).
+        self._rfid_probe.reset_on_reconnect()
+        # Capture the pre-integration register values once, before our first
+        # write. Stored durably, so a restart never mistakes our own values
+        # for the originals.
+        if not self._baseline_loaded:
+            self._baseline_loaded = True
+            try:
+                stored = await self._baseline_store.async_load()
+            except Exception:  # noqa: BLE001 - a corrupt store must not break setup
+                stored = None
+            if isinstance(stored, dict):
+                self._baseline = {
+                    str(k): (int(v) if isinstance(v, (int, float)) else None)
+                    for k, v in stored.items()
+                }
+        if self._baseline is None:
+            include_phase = bool(
+                self.entry.options.get(CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING)
+            )
+            self._baseline = await capture_baseline(self.client, include_phase=include_phase)
+            try:
+                await self._baseline_store.async_save(self._baseline)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Could not persist the register baseline", exc_info=True)
+            _LOGGER.info("Captured charger register baseline: %s", self._baseline)
         await program_failsafe(
             self.client,
             failsafe_current_a=int(
@@ -278,6 +329,30 @@ class WebastoCoordinator(DataUpdateCoordinator[WallboxData]):
         )
         if self.controller is not None:
             await self.controller.async_on_reconnect(data.phase_switch_raw)
+
+    async def async_restore_baseline_on_exit(self) -> None:
+        """Write the captured pre-integration values back (best effort).
+
+        Called on unload, removal and shutdown. Never raises; anything that
+        cannot be restored is logged with its value for manual recovery.
+        """
+        baseline = self._baseline
+        if baseline is None:
+            try:
+                stored = await self._baseline_store.async_load()
+            except Exception:  # noqa: BLE001
+                stored = None
+            baseline = dict(stored) if isinstance(stored, dict) else None
+        if not baseline or all(v is None for v in baseline.values()):
+            return
+        failed = await restore_baseline(self.client, baseline)
+        if failed:
+            _LOGGER.warning(
+                "Could not restore charger registers; recover manually: %s",
+                {key: baseline.get(key) for key in failed},
+            )
+        else:
+            _LOGGER.info("Restored charger register baseline on exit")
 
     @property
     def device_unique_id(self) -> str:
